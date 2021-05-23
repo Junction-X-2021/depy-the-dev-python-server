@@ -4,6 +4,7 @@ import socket
 import pymysql
 
 score_outgoing = []
+room_outgoing = {}
 buffer_size = 512
 
 client = pymysql.connect(
@@ -20,10 +21,10 @@ class MainServer(asyncore.dispatcher):
 
     def handle_accept(self) -> None:
         connection, address = self.accept()
-        ScoreServer(connection)
+        SecondServer(connection)
 
 
-class ScoreServer(asyncore.dispatcher_with_send):
+class SecondServer(asyncore.dispatcher_with_send):
     def handle_read(self) -> None:
         received_data = self.recv(buffer_size)
         if received_data:
@@ -31,8 +32,38 @@ class ScoreServer(asyncore.dispatcher_with_send):
             if 'hostname' in received_data.keys() and 'stage' in received_data.keys():
                 score_outgoing.append(self.socket)
                 self.send_score(received_data)
+            elif 'room_id' in received_data.keys() and 'last' in received_data.keys():
+                status = -1
+                if received_data['last'] in room_outgoing.keys() and self.socket in room_outgoing[received_data['last']]:
+                    room_outgoing[received_data['last']].remove(self.socket)
+                if received_data['room_id'] in room_outgoing.keys():
+                    if len(room_outgoing[received_data['room_id']]) == 1:
+                        room_outgoing[received_data['room_id']].append(self.socket)
+                        status = "go"
+                    elif len(room_outgoing[received_data['room_id']]) == 0:
+                        room_outgoing[received_data['room_id']].append(self.socket)
+                        status = "waiting"
+                    else:
+                        status = "full"
+                elif received_data['room_id'] not in room_outgoing.keys():
+                    room_outgoing[received_data['room_id']] = [self.socket]
+                    status = "waiting"
+                self.send_room_info(received_data['room_id'], status)
         else:
             self.close()
+
+    @staticmethod
+    def send_room_info(room_id, status_code):
+        send_data = {"room_id": room_id, "status": status_code}
+        remove = []
+        for i in room_outgoing[room_id]:
+            try:
+                i.send(pickle.dumps(send_data))
+            except Exception:
+                remove.append(i)
+                continue
+            for r in remove:
+                room_outgoing[room_id].remove(r)
 
     @staticmethod
     def send_score(data: dict):
